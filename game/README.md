@@ -1,7 +1,7 @@
 # Rogue-11: a small Rogue-like for a bare PDP-11
 
 A Rogue-like game written in C, compiled with GCC for the PDP-11, and run on
-the C, Go and Rust emulators in this repository. It runs on the bare machine,
+the C, Go, Rust and Python emulators in this repository. It runs on the bare machine,
 with no operating system. It talks to the console DL11 itself, and uses ANSI
 escape codes, which the terminal window running the emulator interprets, to
 put characters anywhere on the screen.
@@ -14,7 +14,7 @@ Yendor is where the stairs would be, and taking it wins.
 
 From anywhere:
 
-    game/run-rust.sh      # or run-c.sh, run-go.sh
+    game/run-rust.sh      # or run-c.sh, run-go.sh, run-python.sh
 
 Each script builds its emulator if needed and starts the game. The compiled
 game, `rogue.lst`, is in the repository, so playing doesn't need the cross
@@ -35,7 +35,9 @@ emulator at any point.
 
 Each key takes the PDP-11 about 74,000 instructions, measured over a
 624-key game, mostly to redraw the map. That works out to roughly 30 ms per
-key on the Rust emulator, 50 ms on the C and 80 ms on the Go.
+key on the Rust emulator, 50 ms on the C and 80 ms on the Go. The fixed
+Python in `../python` manages about 88,000 instructions a second, so a key
+takes it most of a second.
 
 ## How it works
 
@@ -64,7 +66,7 @@ which depends on how long the player took to press it.
 
 **Loading.** `tolisting.py` turns the compiled image into the listing format
 the emulators already read for the M9301 ROM: one octal address and word per
-line. All three emulators' `runpdp11` now accept `-l listing`, which loads
+line. All four emulators' `runpdp11` now accept `-l listing`, which loads
 the listing after the ROM and starts at its first address:
 
     runpdp11 [-l listing] [instruction-limit]
@@ -176,7 +178,7 @@ runs on:
 A difference would mean a miscompilation like the one above, an emulator
 bug, or code that depends on the size of `int`.
 
-    python3 game/hosttest.py [c] [go] [rust] [--games N] [--keys N] [--seed N]
+    python3 game/hosttest.py [c] [go] [rust] [python] [--games N] [--keys N] [--seed N]
 
 Results from 12 October 2026:
 
@@ -199,6 +201,6 @@ others died: 11 on level 4, 9 on level 5, 3 on level 3 and 3 on level 2.
 | `Makefile` | build, `check`, `disassembly` |
 | `tolisting.py` | memory image to the emulators' listing format |
 | `rogue.lst` | the compiled game, ready to load |
-| `run.sh`, `run-c.sh`, `run-go.sh`, `run-rust.sh` | run the game on an emulator |
+| `run.sh`, `run-c.sh`, `run-go.sh`, `run-rust.sh`, `run-python.sh` | run the game on an emulator |
 | `build-toolchain.sh` | build the cross compiler |
 | `hosttest.py`, `host/` | the host-build comparison and its console |

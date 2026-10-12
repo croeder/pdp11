@@ -8,7 +8,7 @@ byte-identical.  A difference means a miscompilation (as with GCC's bit-test
 code, see the Makefile), an emulator bug, or code whose result depends on
 the size of int.
 
-    python3 hosttest.py [c|go|rust ...] [--games N] [--keys N]
+    python3 hosttest.py [c|go|rust|python ...] [--games N] [--keys N]
 
 Needs the cross compiler (to build rogue.lst), a host C compiler, and the
 emulators (run.sh builds them).  Default: rust, 20 games of 300 keys.
@@ -145,15 +145,15 @@ def first_difference(a, b):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('emulators', nargs='*', help='c, go or rust (default rust)')
+    parser.add_argument('emulators', nargs='*', help='c, go, rust or python (default rust)')
     parser.add_argument('--games', type=int, default=20)
     parser.add_argument('--keys', type=int, default=300)
     parser.add_argument('--seed', type=int, default=1)
     args = parser.parse_args()
     emulators = args.emulators or ['rust']
     for e in emulators:
-        if e not in ('c', 'go', 'rust'):
-            parser.error(f'unknown emulator {e!r}: use c, go or rust')
+        if e not in ('c', 'go', 'rust', 'python'):
+            parser.error(f'unknown emulator {e!r}: use c, go, rust or python')
 
     subprocess.run(['make', '-s', '-C', HERE, 'rogue.lst'], check=True)
     rng = random.Random(args.seed)

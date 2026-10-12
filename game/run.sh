@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the game on one of the emulators:
 #
-#     game/run.sh c|go|rust [instruction-limit]
+#     game/run.sh c|go|rust|python [instruction-limit]
 #
 # Builds the emulator if needed, and the game if the cross compiler is on
 # PATH or in ~/pdp11-tools/bin (otherwise it uses the rogue.lst in the
@@ -30,8 +30,11 @@ go)
 rust)
     (cd "$root/rust" && cargo build -q --release --bin runpdp11)
     emulator=$root/rust/target/release/runpdp11 ;;
+python)
+    # very slow: several seconds per key
+    emulator=$root/python/runpdp11.py ;;
 *)
-    echo "usage: $0 c|go|rust [instruction-limit]" >&2
+    echo "usage: $0 c|go|rust|python [instruction-limit]" >&2
     exit 2 ;;
 esac
 if command -v pdp11-aout-gcc >/dev/null 2>&1 || [ -x "$HOME/pdp11-tools/bin/pdp11-aout-gcc" ]; then
@@ -43,4 +46,8 @@ trap 'rm -rf "$run"' EXIT INT TERM
 ln -s "$root/config_default.json" "$root/source" "$run/"
 mkdir "$run/pdp11.log"
 cd "$run"
-"$emulator" -l "$here/rogue.lst" "$@"
+case $emulator in
+*.py) set -- python3 "$emulator" -l "$here/rogue.lst" "$@" ;;
+*) set -- "$emulator" -l "$here/rogue.lst" "$@" ;;
+esac
+"$@"
