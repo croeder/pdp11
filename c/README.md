@@ -28,7 +28,10 @@ make simhcheck SIMH=/path/to/simh/BIN/pdp11   # compare with SIMH (needs python3
 make difftest   # compare with the Python (needs python3; differs where bugs were fixed)
 ```
 
-`build/runpdp11 [limit]` stops after `limit` instructions if given.  Like the
+`build/runpdp11 [-l listing] [limit]` stops after `limit` instructions if
+given.  `-l listing` also loads a program from a listing (octal address and
+word on each line, the format of `source/M9301-YA.txt`) and starts at its
+first address; `../game` uses it to run a game compiled with GCC.  Like the
 Python, every run writes `./pdp11.log`.
 
 Requires a C11 compiler and POSIX (pthreads, termios, `open_memstream`).

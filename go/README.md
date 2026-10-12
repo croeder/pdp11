@@ -27,6 +27,10 @@ directory, and writes `pdp11.log` there.
     go build ./cmd/runpdp11
     cd .. && go/runpdp11           # optional argument: instruction limit
 
+`runpdp11 -l listing` also loads a program from a listing (octal address and
+word on each line, the format of `source/M9301-YA.txt`) and starts at its
+first address; `../game` uses it to run a game compiled with GCC.
+
 At the `$` prompt the ROM console takes `L addr` (load address), `E `
 (examine, E then space), `D value` (deposit), and `S` (start), each ended
 with Return. Ctrl-C exits and restores the terminal. Linux, macOS and the

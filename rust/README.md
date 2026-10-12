@@ -19,6 +19,10 @@ checking the result against SIMH and the C version.
     cargo build --release
     cd .. && rust/target/release/runpdp11      # optional argument: instruction limit
 
+`runpdp11 -l listing` also loads a program from a listing (octal address and
+word on each line, the format of `source/M9301-YA.txt`) and starts at its
+first address; `../game` uses it to run a game compiled with GCC.
+
 Run the programs from the repository root. They read `config_default.json`
 and `source/M9301-YA.txt` from the current directory, and write `pdp11.log`
 there. At the `$` prompt, the ROM console takes these commands:
