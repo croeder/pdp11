@@ -102,9 +102,9 @@ sets of Homebrew packages:
 On Debian or Ubuntu the equivalents are `build-essential`, `libgmp-dev`,
 `libmpfr-dev`, `libmpc-dev` and `texinfo`.
 
-Then build the game:
+Then build the game. The Makefile finds the compiler on PATH or in
+`~/pdp11-tools/bin`; for another location, add `TOOLS=<its bin directory>`.
 
-    export PATH=~/pdp11-tools/bin:$PATH
     make -C game            # rogue.lst
     make -C game check      # start address and instruction check
     make -C game disassembly

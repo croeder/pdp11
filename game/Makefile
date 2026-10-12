@@ -1,7 +1,13 @@
 # Builds rogue.lst, the game in the listing format the emulators load.
-# Needs the pdp11-aout cross compiler (see build-toolchain.sh) on PATH.
+# Needs the pdp11-aout cross compiler (see build-toolchain.sh), on PATH or
+# in ~/pdp11-tools/bin, where build-toolchain.sh installs it.
 
+TOOLS   ?= $(HOME)/pdp11-tools/bin
+ifeq ($(shell command -v pdp11-aout-gcc 2>/dev/null),)
+PREFIX  ?= $(TOOLS)/pdp11-aout-
+else
 PREFIX  ?= pdp11-aout-
+endif
 CC      = $(PREFIX)gcc
 OBJCOPY = $(PREFIX)objcopy
 OBJDUMP = $(PREFIX)objdump
@@ -26,6 +32,10 @@ MISSING = setd|seti|setf|setl|cfcc|ldfps|stfps|stst|ldf|stf|addf|subf|mulf|divf|
 all: rogue.lst
 
 rogue.out: crt0.s console.c rogue.c console.h
+	@command -v $(CC) >/dev/null 2>&1 || { \
+		echo "pdp11-aout-gcc isn't on PATH or in $(TOOLS)."; \
+		echo "Build it with game/build-toolchain.sh, or set TOOLS=<its bin directory>."; \
+		exit 1; }
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ crt0.s console.c rogue.c -lgcc
 
 rogue.bin: rogue.out

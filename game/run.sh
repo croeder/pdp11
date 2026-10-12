@@ -4,7 +4,8 @@
 #     game/run.sh c|go|rust [instruction-limit]
 #
 # Builds the emulator if needed, and the game if the cross compiler is on
-# PATH (otherwise it uses the rogue.lst in the repository).  Ctrl-C stops
+# PATH or in ~/pdp11-tools/bin (otherwise it uses the rogue.lst in the
+# repository).  Ctrl-C stops
 # the emulator.
 #
 # The emulators read config_default.json and source/ from the current
@@ -33,7 +34,7 @@ rust)
     echo "usage: $0 c|go|rust [instruction-limit]" >&2
     exit 2 ;;
 esac
-if command -v pdp11-aout-gcc >/dev/null 2>&1; then
+if command -v pdp11-aout-gcc >/dev/null 2>&1 || [ -x "$HOME/pdp11-tools/bin/pdp11-aout-gcc" ]; then
     make -s -C "$here" rogue.lst >&2
 fi
 
