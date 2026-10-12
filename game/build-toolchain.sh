@@ -6,10 +6,12 @@
 #     make -C game check
 #
 # Needs a C/C++ compiler, make, and the GMP, MPFR and MPC libraries
-# (Debian/Ubuntu: apt install libgmp-dev libmpfr-dev libmpc-dev texinfo;
+# (Debian/Ubuntu: apt install libgmp-dev libmpfr-dev libmpc-dev;
 # macOS with Homebrew: brew install gmp mpfr libmpc, and pass
 # --with-gmp=$(brew --prefix) etc. to GCC's configure if it can't find them).
-# The build takes a while: GCC is the long part.
+# The manuals are not built (MAKEINFO=true), so Texinfo isn't needed.
+# The build takes a while: GCC is the long part.  Running the script again
+# after a failure reuses the downloaded sources.
 set -e
 PREFIX=${PREFIX:-$HOME/pdp11-tools}
 BINUTILS=binutils-2.42
@@ -26,7 +28,7 @@ mkdir -p build-binutils
 (cd build-binutils &&
     ../$BINUTILS/configure --target=pdp11-aout --prefix="$PREFIX" \
         --disable-nls --disable-werror --disable-gdb --disable-sim &&
-    make -j"$JOBS" && make install)
+    make -j"$JOBS" MAKEINFO=true && make MAKEINFO=true install)
 
 export PATH="$PREFIX/bin:$PATH"
 mkdir -p build-gcc
@@ -36,7 +38,7 @@ mkdir -p build-gcc
         --disable-nls --disable-shared --disable-threads --disable-libssp \
         --disable-libquadmath --disable-libgomp --disable-libatomic \
         --disable-multilib --disable-bootstrap &&
-    make -j"$JOBS" all-gcc all-target-libgcc &&
-    make install-gcc install-target-libgcc)
+    make -j"$JOBS" MAKEINFO=true all-gcc all-target-libgcc &&
+    make MAKEINFO=true install-gcc install-target-libgcc)
 
 echo "installed in $PREFIX/bin"
