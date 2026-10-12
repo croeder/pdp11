@@ -83,6 +83,27 @@ downloads and builds them into `~/pdp11-tools`. I built them with those
 configure options on Linux; the script's download step is the part I
 couldn't run from here.
 
+Before running it on a Mac, install the Xcode command line tools and two
+sets of Homebrew packages:
+
+    xcode-select --install
+    brew install gmp mpfr libmpc
+    brew install texinfo
+
+- **GMP, MPFR and MPC** are the arithmetic libraries GCC is built with.
+  Without them GCC's configure stops with "Building GCC requires GMP 4.2+,
+  MPFR 3.1.0+ and MPC 0.8.0+". The script passes Homebrew's location
+  (`brew --prefix`, `/opt/homebrew` on Apple Silicon) to GCC's configure,
+  because the compiler doesn't search there by itself.
+- **Texinfo** provides `makeinfo`, which builds the GNU manuals. Without it
+  the binutils build stopped at `doc/bfd.info` with `Error 127`. The script
+  now skips the manuals (`MAKEINFO=true`), so this one is optional.
+
+On Debian or Ubuntu the equivalents are `build-essential`, `libgmp-dev`,
+`libmpfr-dev`, `libmpc-dev` and `texinfo`.
+
+Then build the game:
+
     export PATH=~/pdp11-tools/bin:$PATH
     make -C game            # rogue.lst
     make -C game check      # start address and instruction check
