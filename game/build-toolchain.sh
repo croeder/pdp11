@@ -7,8 +7,8 @@
 #
 # Needs a C/C++ compiler, make, and the GMP, MPFR and MPC libraries
 # (Debian/Ubuntu: apt install libgmp-dev libmpfr-dev libmpc-dev;
-# macOS with Homebrew: brew install gmp mpfr libmpc, and pass
-# --with-gmp=$(brew --prefix) etc. to GCC's configure if it can't find them).
+# macOS: brew install gmp mpfr libmpc -- the script tells GCC where
+# Homebrew put them, which the compiler doesn't search by itself).
 # The manuals are not built (MAKEINFO=true), so Texinfo isn't needed.
 # The build takes a while: GCC is the long part.  Running the script again
 # after a failure reuses the downloaded sources.
@@ -30,6 +30,19 @@ mkdir -p build-binutils
         --disable-nls --disable-werror --disable-gdb --disable-sim &&
     make -j"$JOBS" MAKEINFO=true && make MAKEINFO=true install)
 
+# Homebrew's libraries are under its prefix (/opt/homebrew on Apple
+# Silicon), which the compiler doesn't search by itself.
+libs=
+if command -v brew >/dev/null 2>&1; then
+    brew_prefix=$(brew --prefix)
+    if [ ! -e "$brew_prefix/include/gmp.h" ] || [ ! -e "$brew_prefix/include/mpfr.h" ] ||
+        [ ! -e "$brew_prefix/include/mpc.h" ]; then
+        echo "GCC needs GMP, MPFR and MPC: brew install gmp mpfr libmpc" >&2
+        exit 1
+    fi
+    libs="--with-gmp=$brew_prefix --with-mpfr=$brew_prefix --with-mpc=$brew_prefix"
+fi
+
 export PATH="$PREFIX/bin:$PATH"
 mkdir -p build-gcc
 (cd build-gcc &&
@@ -37,7 +50,7 @@ mkdir -p build-gcc
         --enable-languages=c --without-headers --with-newlib \
         --disable-nls --disable-shared --disable-threads --disable-libssp \
         --disable-libquadmath --disable-libgomp --disable-libatomic \
-        --disable-multilib --disable-bootstrap &&
+        --disable-multilib --disable-bootstrap $libs &&
     make -j"$JOBS" MAKEINFO=true all-gcc all-target-libgcc &&
     make MAKEINFO=true install-gcc install-target-libgcc)
 
