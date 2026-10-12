@@ -7,9 +7,8 @@
  *
  * TRANSLATION NOTE: Python's comparison operators bind more loosely than its
  * bitwise operators, so `a | b == 0` means `(a | b) == 0`.  The C below
- * spells that grouping out with parentheses.  Several conditions differ from
- * the DEC definitions (BGE tests N|V rather than N^V, for example); they are
- * reproduced as the Python has them. */
+ * spells that grouping out with parentheses.  BGE is fixed to the DEC
+ * definition (see FIX); the other conditions already matched it. */
 #include "pdp11_br_ops.h"
 #include "pdp11_logger.h"
 
@@ -86,8 +85,9 @@ int BEQ(br_ops *self, pyint offset)
 
 int BGE(br_ops *self, pyint offset)
 {
-    /* 00 20 XXX branch if greater than or equal 4-47 */
-    if ((PSW_get_n(self->psw) | PSW_get_v(self->psw)) == 0)
+    /* 00 20 XXX branch if greater than or equal 4-47: N xor V = 0
+     * FIX: the Python tested N or V. */
+    if ((PSW_get_n(self->psw) ^ PSW_get_v(self->psw)) == 0)
         Registers_set_pc_2x_offset(self->reg, offset, "BGE");
     return 1;
 }

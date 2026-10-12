@@ -68,8 +68,8 @@ static void test_MOV_2(void)
 }
 
 RR_CASE(test_MOVB_01,  0777777, 3, 0xA72E,  4, 0x0000,  0110000, "MOVB R3,R4", 0x002E,  "0001")
-RR_CASE(test_MOVB_02,  0777777, 3, 0xA7AE,  4, 0x0000,  0110000, "MOVB R3,R4", 0x00AE,  "1001")
-RR_CASE(test_MOVB_03,  0777777, 3, 0x00AE,  4, 0xA700,  0110000, "MOVB R3,R4", 0xA7AE,  "1001")
+RR_CASE(test_MOVB_02,  0777777, 3, 0xA7AE,  4, 0x0000,  0110000, "MOVB R3,R4", 0xFFAE,  "1001") /* MOVB to a register sign-extends (Python: 0x00AE) */
+RR_CASE(test_MOVB_03,  0777777, 3, 0x00AE,  4, 0xA700,  0110000, "MOVB R3,R4", 0xFFAE,  "1001") /* sign-extends (Python: 0xA7AE) */
 
 static void test_MOVB_04(void)
 {
@@ -117,19 +117,13 @@ static void test_DIV(const char *name, pyint numerator, pyint denominator, int R
     /* DIV: (R, R+1) < (R, R+1) / (src) */
     pyint py_numerator = pythonifyPDP11Long(numerator);
     pyint py_denominator = pythonifyPDP11Word(denominator);
-    pyint py_expected_quotient, py_expected_remainder;
-    if (py_denominator == 0) {
-        py_expected_quotient = 0;
-        py_expected_remainder = 0;
-    } else {
-        py_expected_quotient = py_floordiv(py_numerator, py_denominator);
-        py_expected_remainder = py_mod(py_numerator, py_denominator);
-    }
-    /* Fix for error in the way Python does remainder */
-    if (py_numerator < 0 || py_denominator < 0) {
-        py_expected_quotient = py_expected_quotient + 1;
-        py_expected_remainder = py_numerator - (py_denominator * py_expected_quotient);
-    }
+    /* The PDP-11 truncates toward zero and gives the remainder the sign of
+     * the dividend, which is what C's / and % do.  (The Python test used floor
+     * division plus 1 whenever an operand was negative, which is wrong when
+     * both are negative: it expected 486 for case Nn, where the quotient is 485.) */
+    ASSERT(py_denominator != 0);
+    pyint py_expected_quotient = py_numerator / py_denominator;
+    pyint py_expected_remainder = py_numerator % py_denominator;
 
     /* set up the environment */
     int Rvl = RD + 1;
@@ -190,23 +184,25 @@ int main(void)
         {"nz", n, z, 2, 4, "0100"},
         {"nn", n, n, 2, 4, "0000"},
 
-        {"pP", p, P, 2, 4, "0000"},
-        {"pN", p, N, 2, 4, "1000"},
+        /* C is set when the product does not fit in 16 bits, which is every
+         * nonzero case with a P or N factor (Python: C always 0) */
+        {"pP", p, P, 2, 4, "0001"},
+        {"pN", p, N, 2, 4, "1001"},
         {"zP", z, P, 2, 4, "0100"},
         {"zN", z, N, 2, 4, "0100"},
-        {"nP", n, P, 2, 4, "1000"},
-        {"nN", n, N, 2, 4, "0000"},
-        {"Pp", P, p, 2, 4, "0000"},
+        {"nP", n, P, 2, 4, "1001"},
+        {"nN", n, N, 2, 4, "0001"},
+        {"Pp", P, p, 2, 4, "0001"},
         {"Pz", P, z, 2, 4, "0100"},
-        {"Pn", P, n, 2, 4, "1000"},
-        {"Np", N, p, 2, 4, "1000"},
+        {"Pn", P, n, 2, 4, "1001"},
+        {"Np", N, p, 2, 4, "1001"},
         {"Nz", N, z, 2, 4, "0100"},
-        {"Nn", N, n, 2, 4, "0000"},
+        {"Nn", N, n, 2, 4, "0001"},
 
-        {"PP", P, P, 2, 4, "0000"},
-        {"PN", P, N, 2, 4, "1000"},
-        {"NP", N, P, 2, 4, "1000"},
-        {"NN", N, N, 2, 4, "0000"},
+        {"PP", P, P, 2, 4, "0001"},
+        {"PN", P, N, 2, 4, "1001"},
+        {"NP", N, P, 2, 4, "1001"},
+        {"NN", N, N, 2, 4, "0001"},
     };
     for (size_t i = 0; i < sizeof multiplication_testcases / sizeof multiplication_testcases[0]; i++) {
         const char *name = multiplication_testcases[i].name;

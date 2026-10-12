@@ -3,12 +3,9 @@
  * 01 SS DD through 06 SS DD
  * 11 SS DD through 16 SS DD
  *
- * TRANSLATION NOTES
- * - CMP calls psw.set_v(BW, ...), which writes the mode bits (see
- *   pdp11_hardware.c), and returns dest so the destination is rewritten
- *   with its own value.  Reproduced.
- * - BIT computes byte_mask(BW, source, source & dest) and that result is
- *   written to the destination.  Reproduced. */
+ * The instruction semantics follow the DEC processor handbook rather than
+ * the Python; each FIX comment says what the Python did.  The translation
+ * that reproduces the Python exactly is tagged c-translation-faithful. */
 #include "pdp11_ssdd_ops.h"
 #include "pdp11_logger.h"
 
@@ -82,116 +79,93 @@ pyint ssdd_ops_byte_mask(ssdd_ops *self, char BW, pyint value, pyint target)
     return value;
 }
 
+#define SZ_M(B) ((B) == 'B' ? MASK_LOW_BYTE : MASK_WORD)
+#define SZ_S(B) ((B) == 'B' ? MASK_BYTE_MSB : MASK_WORD_MSB)
+
+static void set_nz(PSW *psw, char B, pyint r)
+{
+    PSW_set_psw(psw, .n = (r & SZ_S(B)) ? 1 : 0, .z = r == 0 ? 1 : 0);
+}
+
 InstrResult MOV(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
-    /* 01 SS DD move 4-23   (dst) < (src) */
-    pyint result = ssdd_ops_byte_mask(self, BW, source, dest);
-    PSW_set_n(self->psw, BW, source);
-    PSW_set_z(self->psw, BW, source);
+    /* 01 SS DD move 4-23   (dst) < (src).  N, Z; V cleared; C unaffected.
+     * MOVB to a register sign-extends into the high byte.
+     * FIX: the Python kept the register's old high byte. */
+    (void)self;
+    (void)dest;
+    pyint s = source & SZ_M(BW);
+    set_nz(self->psw, BW, s);
     PSW_set_psw(self->psw, .v = 0);
-    return ok(result, "");
+    if (BW == 'B' && (s & MASK_BYTE_MSB))
+        return ok(s | MASK_HIGH_BYTE, "");   /* do_ssdd_op writes only the low byte to memory */
+    return ok(s, "");
 }
 
 InstrResult CMP(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
-    /* compare 4-24   (src)-(dst)
-     * set the condition code based on that result but don't change the destination */
-    pyint result = ssdd_ops_byte_mask(self, BW, source - dest, dest);
-    PSW_set_n(self->psw, BW, result);
-    PSW_set_z(self->psw, BW, result);
-    PSW_set_v(self->psw, BW, result);
+    /* compare 4-24   (src)-(dst); neither operand changes.
+     * V: operands of opposite sign and the result has the sign of dst
+     * C: set on a borrow, i.e. src < dst unsigned
+     * FIX: the Python's V test wrote the mode bits and C was never set. */
+    pyint s = source & SZ_M(BW), d = dest & SZ_M(BW);
+    pyint r = (s - d) & SZ_M(BW);
+    set_nz(self->psw, BW, r);
+    PSW_set_psw(self->psw, .v = ((s ^ d) & (~d ^ r) & SZ_S(BW)) ? 1 : 0, .c = s < d ? 1 : 0);
     return ok(dest, "");
 }
 
 InstrResult BIT(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
-    /* bit test 4-28   (src) ^ (dst)
-     * Performs logical "and" comparison of the source and destination
-     * and modifies condition codes accordingly. */
-    pyint result = ssdd_ops_byte_mask(self, BW, source, source & dest);
-    PSW_set_n(self->psw, BW, result);
-    PSW_set_z(self->psw, BW, result);
+    /* bit test 4-28   (src) & (dst); neither operand changes.
+     * FIX: the Python tested byte_mask(source, source & dest) and wrote it to dst. */
+    pyint r = source & dest & SZ_M(BW);
+    set_nz(self->psw, BW, r);
     PSW_set_psw(self->psw, .v = 0);
-    return ok(result, "");
+    return ok(dest, "");
 }
 
 InstrResult BIC(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
-    /* bit clear 4-29   (dst) < ~(src)&(dst)
-     * for byte operations, low-order byte is affected, high-order byte is unchanged */
-    pyint wsource = ~(source | 0400000) & MASK_WORD;
-    pyint result = ssdd_ops_byte_mask(self, BW, wsource & dest, dest);
-    PSW_set_n(self->psw, BW, result);
-    PSW_set_z(self->psw, BW, result);
+    /* bit clear 4-29   (dst) < ~(src)&(dst).  For bytes only the low byte changes. */
+    pyint r = ~source & dest & SZ_M(BW);
+    set_nz(self->psw, BW, r);
     PSW_set_psw(self->psw, .v = 0);
-    return ok(result, "");
+    return ok(ssdd_ops_byte_mask(self, BW, r, dest), "");
 }
 
 InstrResult BIS(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
-    /* bit set 4-30   (dst) < (src) v (dst) */
-    pyint result = ssdd_ops_byte_mask(self, BW, source | dest, dest);
-    PSW_set_n(self->psw, BW, result);
-    PSW_set_z(self->psw, BW, result);
+    /* bit set 4-30   (dst) < (src) | (dst) */
+    pyint r = (source | dest) & SZ_M(BW);
+    set_nz(self->psw, BW, r);
     PSW_set_psw(self->psw, .v = 0);
-    return ok(result, "");
+    return ok(ssdd_ops_byte_mask(self, BW, r, dest), "");
 }
 
 InstrResult ADDSUB(ssdd_ops *self, char BW, pyint source, pyint dest)
 {
     /* 06 SS DD: ADD 4-25 (dst) < (src) + (dst)
-     * 16 SS DD: SUB 4-26 (dst) < (dst) + ~(src) + 1
-     * The ADD and SUB instructions use word addressing,
-     * and have no byte-oriented variations.
-     * N set if result < 0;  Z set if result = 0;  V on arithmetic overflow;
-     * C: set if there was a carry from the most significant bit of the result */
-    char a[PYSTR], b[PYSTR], c[PYSTR];
-    logging_info("source:%s dest:%s", py_oct(a, source), py_oct(b, dest));
-    pyint py_source = pythonifyPDP11Word(source);
-    pyint py_dest = pythonifyPDP11Word(dest);
-    pyint sS = ssdd_ops_sign(self, source);
-    pyint sD = ssdd_ops_sign(self, dest);
-    pyint v = 0;
-    pyint cbit = 0;
-    pyint pdp11_result;
-
-    /* SUB is the "byte" version of ADD */
+     * 16 SS DD: SUB 4-26 (dst) < (dst) - (src)
+     * Word-only; SUB is encoded where a "byte ADD" would be.
+     * ADD V: operands of the same sign and the result of the other sign;
+     *     C: carry out of bit 15.
+     * SUB V: operands of opposite sign and the result has the sign of src;
+     *     C: set on a borrow, i.e. src > dst unsigned.
+     * FIX: the Python tied C to V, missed carries, and never set C on SUB borrows. */
+    pyint s = source & MASK_WORD, d = dest & MASK_WORD, r, v, c;
     if (BW == 'W') {  /* ADD */
-        pyint py_result = py_source + py_dest;
-        pdp11_result = PDP11WordifyPythonInteger(py_result);
-        logging_info("py_source:%lld + py_dest:%lld = pdp11_result:%s",
-                     (long long)py_source, (long long)py_dest, py_oct(c, pdp11_result));
-        pyint sR = ssdd_ops_sign(self, pdp11_result);
-        logging_info("sS:%lld sD:%lld sR:%lld", (long long)sS, (long long)sD, (long long)sR);
-        if (source != 0 && dest != 0 && sS == sD) {
-            if (sS != sR) {
-                v = 1;
-                cbit = 1;
-            }
-        }
-        if (((source | dest) & MASK_WORD_MSB) == MASK_WORD_MSB && (pdp11_result & MASK_WORD_MSB) == 0) {
-            logging_info("carry");
-            cbit = 1;
-        }
-    } else {  /* SUB DST - SRC */
-        pyint py_result = py_dest - py_source;
-        pdp11_result = PDP11WordifyPythonInteger(py_result);
-        logging_info("py_dest:%lld - py_source:%lld = py_result:%lld pdp11_result:%s",
-                     (long long)py_dest, (long long)py_source, (long long)py_result, py_oct(c, pdp11_result));
-        pyint sR = ssdd_ops_sign(self, pdp11_result);
-        logging_info("sS:%lld sD:%lld sR:%lld", (long long)sS, (long long)sD, (long long)sR);
-        if (source != 0 && dest != 0 && sS != sD) {
-            if (sS == sR) {
-                v = 1;
-                cbit = 1;
-            }
-        }
+        r = (s + d) & MASK_WORD;
+        v = (~(s ^ d) & (s ^ r) & MASK_WORD_MSB) ? 1 : 0;
+        c = (s + d) > MASK_WORD ? 1 : 0;
+    } else {          /* SUB */
+        r = (d - s) & MASK_WORD;
+        v = ((s ^ d) & (~s ^ r) & MASK_WORD_MSB) ? 1 : 0;
+        c = s > d ? 1 : 0;
     }
-
-    PSW_set_n(self->psw, 'W', pdp11_result);
-    PSW_set_z(self->psw, 'W', pdp11_result);
-    PSW_set_psw(self->psw, .v = v, .c = cbit);
-    return ok(pdp11_result, "");
+    set_nz(self->psw, 'W', r);
+    PSW_set_psw(self->psw, .v = v, .c = c);
+    return ok(r, "");
 }
 
 int ssdd_ops_is_ssdd_op(ssdd_ops *self, pyint instruction)
@@ -215,8 +189,14 @@ OpResult ssdd_ops_do_ssdd_op(ssdd_ops *self, pyint instruction)
 
     pyint source = py_shr(instruction & 0007700, 6);
     pyint dest = instruction & 0000077;
-    AMGet s = AddressModes_addressing_mode_get(self->am, bw, source);
-    AMGet d = AddressModes_addressing_mode_get(self->am, bw, dest);
+    /* ADD and SUB are word instructions even though SUB has bit 15 set.
+     * FIX: the Python fetched SUB's operands as bytes. */
+    char size = (opcode == 0060000) ? 'W' : bw;
+    AMGet s = AddressModes_addressing_mode_get(self->am, size, source);
+    /* FIX: MOV does not read its destination (the Python did, which matters
+     * for device registers such as the DL11 receive buffer). */
+    AMGet d = (opcode == 0010000) ? AddressModes_addressing_mode_address(self->am, size, dest)
+                                  : AddressModes_addressing_mode_get(self->am, size, dest);
 
     r.run = 1;
     pyint result;
@@ -233,7 +213,9 @@ OpResult ssdd_ops_do_ssdd_op(ssdd_ops *self, pyint instruction)
         PY_RAISE("UnboundLocalError", "report referenced before assignment");
     }
 
-    AddressModes_addressing_mode_set(self->am, bw, d.addressmode, result, d.register_, d.address);
+    /* FIX: CMP and BIT do not write their destination. */
+    if (opcode != 0020000 && opcode != 0030000)
+        AddressModes_addressing_mode_set(self->am, size, d.addressmode, result, d.register_, d.address);
     StopWatches_stop(self->sw, "ssdd");
 
     snprintf(r.operand1, sizeof r.operand1, "%s", s.operand_word);

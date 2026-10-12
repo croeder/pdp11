@@ -1,21 +1,8 @@
 /* pdp11_ss_ops.c - translation of pdp11_ss_ops.py (single operand instructions)
  *
- * TRANSLATION NOTES
- * - Operands and results are Python ints (pyint): results are not always
- *   masked to 16 bits, and NEG can produce a negative number that is then
- *   stored in a register.  That is reproduced.
- * - The Python sets a high bit (| 0o400000) before shifting "for python
- *   weirdness"; kept, since it changes results in some cases.
- * - INC, DEC and NEG call psw.set_v(B, ...), which (see pdp11_hardware.c)
- *   writes the mode bits rather than V.  Reproduced.
- * - ROL byte uses 0o0000000010000000 for "bit 7" and ASL uses
- *   0o1000000000000000 for "bit 15"; both are octal literals, so they test
- *   bits 21 and 45.  Reproduced.
- * - ASL byte: the Python line
- *       result = (highbyte << 1) & MASK_HIGH_BYTE (lowbyte << 1) & MASK_LOW_BYTE
- *   is missing an operator, so ASLB raises TypeError in Python.  The C
- *   joins the two halves with |.
- * - SXT stores 1, not -1, when N is set.  Reproduced. */
+ * The instruction semantics follow the DEC processor handbook rather than
+ * the Python; each FIX comment says what the Python did.  The translation
+ * that reproduces the Python exactly is tagged c-translation-faithful. */
 #include "pdp11_ss_ops.h"
 #include "pdp11_logger.h"
 
@@ -119,6 +106,16 @@ pyint ss_ops_mask(ss_ops *self, pyint value, char B)
     return B == 'B' ? (value & MASK_LOW_BYTE) : (value & MASK_WORD);
 }
 
+/* Operand size helpers: M = value mask, S = sign bit */
+#define SZ_M(B) ((B) == 'B' ? MASK_LOW_BYTE : MASK_WORD)
+#define SZ_S(B) ((B) == 'B' ? MASK_BYTE_MSB : MASK_WORD_MSB)
+
+/* set N and Z from a result already masked to the operand size */
+static void set_nz(PSW *psw, char B, pyint r)
+{
+    PSW_set_psw(psw, .n = (r & SZ_S(B)) ? 1 : 0, .z = r == 0 ? 1 : 0);
+}
+
 InstrResult JMP(ss_ops *self, pyint operand, char B)
 {
     /* 00 01 DD JMP jump 4-56 */
@@ -133,7 +130,8 @@ InstrResult SWAB(ss_ops *self, pyint operand, char B)
      * n: set if bit 7 of result is set;  z: set if low-order byte of result = 0
      * v: cleared;  c: cleared */
     (void)B;
-    pyint result = py_shr(operand & 0xFF00, 8) + py_shl(operand & 0x00FF, 8);
+    pyint d = operand & MASK_WORD;
+    pyint result = py_shr(d & 0xFF00, 8) | py_shl(d & 0x00FF, 8);
     PSW_set_n(self->psw, 'B', result & 0x00FF);
     PSW_set_z(self->psw, 'B', result & 0x00FF);
     PSW_set_psw(self->psw, .v = 0, .c = 0);
@@ -150,72 +148,68 @@ InstrResult CLR(ss_ops *self, pyint operand, char B)
 
 InstrResult COM(ss_ops *self, pyint operand, char B)
 {
-    /* 00 51 DD Complement Destination
-     * Because of the way Python does things, we add a leading bit and then strip it off. */
-    pyint woperand = operand | 0400000;
-    pyint result = ~woperand & MASK_WORD;
-    result = ss_ops_byte_mask(self, B, result, operand);
-    PSW_set_n(self->psw, B, result);
-    PSW_set_z(self->psw, B, result);
+    /* 00 51 DD Complement Destination.  N, Z; V cleared; C set */
+    pyint r = ~operand & SZ_M(B);
+    set_nz(self->psw, B, r);
     PSW_set_psw(self->psw, .v = 0, .c = 1);
-    return ok(result, "");
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult INC(ss_ops *self, pyint operand, char B)
 {
-    /* 00 52 DD Increment Destination */
-    pyint result = operand + 1;
-    result = ss_ops_byte_mask(self, B, result, operand);
-    PSW_set_v(self->psw, B, result);
-    PSW_set_n(self->psw, B, result);
-    PSW_set_z(self->psw, B, result);
-    return ok(result, "");
+    /* 00 52 DD Increment Destination.  V set if (dst) was the largest
+     * positive value; C unaffected.  FIX: the Python's V test wrote the mode bits. */
+    pyint r = (operand + 1) & SZ_M(B);
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = r == SZ_S(B) ? 1 : 0);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult DEC(ss_ops *self, pyint operand, char B)
 {
-    /* 00 53 DD Decrement Destination */
-    pyint woperand = operand | 0400000;
-    pyint result = (woperand - 1) & MASK_WORD;
-    result = ss_ops_byte_mask(self, B, result, operand);
-    PSW_set_v(self->psw, B, result);
-    PSW_set_n(self->psw, B, result);
-    PSW_set_z(self->psw, B, result);
-    return ok(result, "");
+    /* 00 53 DD Decrement Destination.  V set if (dst) was the most
+     * negative value; C unaffected. */
+    pyint r = (operand - 1) & SZ_M(B);
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = r == (SZ_S(B) - 1) ? 1 : 0);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult NEG(ss_ops *self, pyint operand, char B)
 {
-    /* 00 54 DD negate Destination */
-    pyint result = -operand;
-    result = ss_ops_byte_mask(self, B, result, operand);
-    PSW_set_v(self->psw, B, result);
-    PSW_set_n(self->psw, B, result);
-    PSW_set_z(self->psw, B, result);
-    return ok(result, "");
+    /* 00 54 DD Negate Destination.  V set if result is the most negative
+     * value; C cleared if result is 0, set otherwise.
+     * FIX: the Python stored a negative Python int and never set V or C. */
+    pyint r = (-operand) & SZ_M(B);
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = r == SZ_S(B) ? 1 : 0, .c = r != 0 ? 1 : 0);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult ADC(ss_ops *self, pyint operand, char B)
 {
-    /* 00 55 DD Add Carry */
-    pyint result = operand + PSW_get_c(self->psw);
-    result = ss_ops_byte_mask(self, B, result, operand);
-    return ok(result, "");
+    /* 00 55 DD Add Carry.  FIX: the Python set no condition codes. */
+    pyint c = PSW_get_c(self->psw);
+    pyint r = (operand + c) & SZ_M(B);
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = (c && r == SZ_S(B)) ? 1 : 0, .c = (c && r == 0) ? 1 : 0);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult SBC(ss_ops *self, pyint operand, char B)
 {
-    /* 00 56 DD Subtract Carry */
-    pyint result = operand - PSW_get_c(self->psw);
-    result = ss_ops_byte_mask(self, B, result, operand);
-    return ok(result, "");
+    /* 00 56 DD Subtract Carry.  FIX: the Python set no condition codes. */
+    pyint c = PSW_get_c(self->psw);
+    pyint r = (operand - c) & SZ_M(B);
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = (c && r == SZ_S(B) - 1) ? 1 : 0, .c = (c && r == SZ_M(B)) ? 1 : 0);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult TST(ss_ops *self, pyint operand, char B)
 {
     /* 00 57 DD Test Destination */
-    PSW_set_n(self->psw, B, operand);
-    PSW_set_z(self->psw, B, operand);
+    set_nz(self->psw, B, operand & SZ_M(B));
     PSW_set_psw(self->psw, .v = 0, .c = 0);
     return ok(operand, "");
 }
@@ -223,132 +217,72 @@ InstrResult TST(ss_ops *self, pyint operand, char B)
 InstrResult ROR(ss_ops *self, pyint operand, char B)
 {
     /* 00 60 DD ROR rotate right
-     * Bit 0 is loaded into the C-bit and the previous carry into bit 15.
-     * N: high-order bit of the result;  Z: result = 0
-     * C: low-order bit of the destination;  V: N xor C */
-    pyint result, carry, testresult;
-    if (B == 'B') {
-        pyint bit8 = operand & 0x0100;
-        pyint highbyte = (operand & MASK_HIGH_BYTE) | 0400000;
-        pyint bit0 = operand & 0x0001;
-        pyint lowbyte = (operand & MASK_LOW_BYTE) | 0400000;
-        result = py_shl(bit8, 7) | (py_shr(highbyte, 1) & MASK_HIGH_BYTE) | py_shl(bit0, 7) |
-                 (py_shr(lowbyte, 1) & MASK_LOW_BYTE);
-        carry = (result & 01) | py_shr(result & 0x0100, 8);
-        testresult = result & MASK_LOW_BYTE;
-    } else {
-        operand = operand | 0400000;  /* set the high bit for python weirdness */
-        pyint bit0 = operand & 0x0001;
-        result = (py_shl(bit0, 15) | py_shr(operand, 1)) & MASK_WORD;
-        carry = result & 01;
-        testresult = result;
-    }
-    pyint N = PSW_set_n(self->psw, B, testresult);
-    pyint Z = PSW_set_z(self->psw, B, testresult);
-    pyint C = carry & 01;
-    pyint V = N ^ C;
-    PSW_set_psw(self->psw, .n = N, .z = Z, .v = V, .c = C);
-    return ok(result, "");
+     * Bit 0 is loaded into the C-bit and the previous carry into the sign bit.
+     * N: sign of result;  Z: result = 0;  C: low-order bit of the destination;  V: N xor C
+     * FIX: the Python byte version also rotated the high byte, and the word
+     * version took C from the result instead of the old bit 0. */
+    pyint d = operand & SZ_M(B);
+    pyint c_in = PSW_get_c(self->psw);
+    pyint r = py_shr(d, 1) | (c_in ? SZ_S(B) : 0);
+    pyint C = d & 1;
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = PSW_get_n(self->psw) ^ C, .c = C);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult ROL(ss_ops *self, pyint operand, char B)
 {
     /* 00 61 DD ROL rotate left
-     * Bit 15 is loaded into the carry and the previous carry into bit 0.
-     * V: N xor C;  C: high-order bit of the destination */
-    pyint result, carry, testresult;
-    if (B == 'B') {
-        pyint bit15 = operand & 0x8000;
-        pyint highbyte = operand & MASK_HIGH_BYTE;
-        pyint bit7 = operand & 010000000;   /* Python: 0o0000000010000000 */
-        pyint lowbyte = operand & MASK_LOW_BYTE;
-        result = (py_shl(highbyte, 1) | py_shr(bit15, 7) | py_shl(lowbyte, 1) | py_shr(bit7, 7)) & MASK_WORD;
-        carry = py_shr(bit15, 15) | py_shr(bit7, 7);
-        testresult = result & MASK_LOW_BYTE;
-    } else {
-        pyint bit15 = operand & 0x8000;
-        result = (py_shl(operand, 1) | py_shr(bit15, 15)) & MASK_WORD;
-        carry = py_shr(bit15, 15);
-        testresult = result;
-    }
-    pyint N = PSW_set_n(self->psw, B, testresult);
-    pyint Z = PSW_set_z(self->psw, B, testresult);
-    pyint C = carry & 01;
-    pyint V = N ^ C;
-    PSW_set_psw(self->psw, .n = N, .z = Z, .v = V, .c = C);
+     * The sign bit is loaded into the carry and the previous carry into bit 0.
+     * FIX: the Python ignored the carry and its byte version tested bit 21. */
+    pyint d = operand & SZ_M(B);
+    pyint c_in = PSW_get_c(self->psw);
+    pyint r = (py_shl(d, 1) | c_in) & SZ_M(B);
+    pyint C = (d & SZ_S(B)) ? 1 : 0;
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = PSW_get_n(self->psw) ^ C, .c = C);
     char a[PYSTR], b[PYSTR], report[160];
-    snprintf(report, sizeof report, "ROL(%s)=%s", py_bin(a, operand), py_bin(b, result));
-    return ok(result, report);
+    snprintf(report, sizeof report, "ROL(%s)=%s", py_bin(a, operand), py_bin(b, r));
+    return ok(ss_ops_byte_mask(self, B, r, operand), report);
 }
 
 InstrResult ASR(ss_ops *self, pyint operand, char B)
 {
-    /* 00 62 DD ASR arithmetic shift right.  Bit 15 is replicated.
-     * v: N xor C;  c: low-order bit of the destination */
-    pyint result, testresult, bit0;
-    if (B == 'B') {
-        pyint bit15 = operand & 0x8000;
-        pyint highbyte = (operand & MASK_HIGH_BYTE) | 0400000;
-        pyint bit7 = operand & 0x0080;
-        pyint lowbyte = (operand & MASK_LOW_BYTE) | 0400000;
-        bit0 = py_shr(operand & 0x0080, 8) | (operand & 0x0001);
-        result = bit15 | (py_shr(highbyte, 1) & MASK_HIGH_BYTE) | bit7 | (py_shr(lowbyte, 1) & MASK_LOW_BYTE);
-        testresult = result & MASK_LOW_BYTE;
-    } else {
-        operand = operand | 0400000;  /* set the high bit for python weirdness */
-        pyint bit15 = operand & 0x8000;
-        bit0 = operand & 0x0001;
-        result = (py_shr(operand, 1) & MASK_WORD) | bit15;
-        testresult = result;
-    }
-    pyint N = PSW_set_n(self->psw, B, testresult);
-    pyint Z = PSW_set_z(self->psw, B, testresult);
-    pyint C = bit0 & 01;
-    pyint V = N ^ C;
-    PSW_set_psw(self->psw, .n = N, .z = Z, .v = V, .c = C);
-    return ok(result, "");
+    /* 00 62 DD ASR arithmetic shift right.  The sign bit is replicated.
+     * C: low-order bit of the destination;  V: N xor C */
+    pyint d = operand & SZ_M(B);
+    pyint r = py_shr(d, 1) | (d & SZ_S(B));
+    pyint C = d & 1;
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = PSW_get_n(self->psw) ^ C, .c = C);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult ASL(ss_ops *self, pyint operand, char B)
 {
     /* 00 63 DD ASL arithmetic shift left.  Bit 0 is loaded with 0.
-     * v: N xor C;  c: high-order bit of the destination */
-    pyint result, testresult, bit15;
-    if (B == 'B') {
-        pyint highbyte = operand & MASK_HIGH_BYTE;
-        pyint lowbyte = operand & MASK_LOW_BYTE;
-        bit15 = (operand & 01000000000000000LL) | py_shl(operand & 010000000, 8);  /* octal, as in the Python */
-        /* Python is missing the operator between the halves (TypeError); | assumed */
-        result = (py_shl(highbyte, 1) & MASK_HIGH_BYTE) | (py_shl(lowbyte, 1) & MASK_LOW_BYTE);
-        testresult = result & MASK_LOW_BYTE;
-    } else {
-        bit15 = operand & 01000000000000000LL;   /* Python: 0o1000000000000000 */
-        result = py_shl(operand, 1) & MASK_WORD;  /* take off that bit */
-        testresult = result;
-    }
-    pyint N = PSW_set_n(self->psw, B, testresult);
-    pyint Z = PSW_set_z(self->psw, B, testresult);
-    pyint C = py_shr(bit15, 15);
-    pyint V = N ^ C;
-    PSW_set_psw(self->psw, .n = N, .z = Z, .v = V, .c = C);
-    return ok(result, "");
+     * C: the sign bit of the destination;  V: N xor C
+     * FIX: the Python tested bit 45 for C (so C was always 0) and its byte
+     * version raised TypeError. */
+    pyint d = operand & SZ_M(B);
+    pyint r = py_shl(d, 1) & SZ_M(B);
+    pyint C = (d & SZ_S(B)) ? 1 : 0;
+    set_nz(self->psw, B, r);
+    PSW_set_psw(self->psw, .v = PSW_get_n(self->psw) ^ C, .c = C);
+    return ok(ss_ops_byte_mask(self, B, r, operand), "");
 }
 
 InstrResult SXT(ss_ops *self, pyint operand, char B)
 {
     /* 00 67 DD Sign Extend
-     * (dst)<- 0 if n bit is clear;  (dst)<- -1 if n bit is set;  Z: set if n bit clear */
-    pyint result, Z;
-    if (PSW_get_n(self->psw) == 0) {
-        result = 0;
-        Z = 1;
-    } else {
-        result = 1;
-        Z = PSW_get_z(self->psw);
-    }
-    PSW_set_psw(self->psw, .z = Z);
-    result = ss_ops_byte_mask(self, B, result, operand);
-    return ok(result, "");
+     * (dst) <- 0 if N is clear, -1 (0o177777) if N is set
+     * Z: set if N clear;  V: cleared;  N, C: unaffected
+     * FIX: the Python stored 1 for -1 and did not clear V. */
+    (void)B;
+    (void)operand;
+    pyint n = PSW_get_n(self->psw);
+    PSW_set_psw(self->psw, .z = n ^ 1, .v = 0);
+    return ok(n ? MASK_WORD : 0, "");
 }
 
 /* standard PDP11 subroutine return; stack operation LSI11-03 */
@@ -405,15 +339,26 @@ OpResult ss_ops_do_ss_op(ss_ops *self, pyint instruction)
         r.run = j.run;
         snprintf(r.operand1, sizeof r.operand1, "%s", j.operand_word);
         snprintf(r.assembly, sizeof r.assembly, "%s %s", name, j.assembly);
-        InstrResult ir = fn(self, j.jump_address, BW);
-        snprintf(r.report, sizeof r.report, "%s", ir.report);
+        if (j.run) {  /* FIX: an illegal JMP Rn halts without jumping to 0 */
+            InstrResult ir = fn(self, j.jump_address, BW);
+            snprintf(r.report, sizeof r.report, "%s", ir.report);
+        }
     } else {
-        AMGet g = AddressModes_addressing_mode_get(self->am, BW, source);
+        /* FIX: CLR and SXT write without reading the destination; TST reads
+         * without writing; the unimplemented stubs neither read nor write.
+         * The Python read and wrote back every destination. */
+        int unimplemented = fn == ss_MARK || fn == MTPS || fn == ss_MFPI || fn == ss_MTPI ||
+                            fn == MFPS || fn == MFPD || fn == MTPD;
+        int write_only = fn == CLR || fn == SXT;
+        int read_only = fn == TST;
+        AMGet g = (write_only || unimplemented) ? AddressModes_addressing_mode_address(self->am, BW, source)
+                                                : AddressModes_addressing_mode_get(self->am, BW, source);
         snprintf(r.operand1, sizeof r.operand1, "%s", g.operand_word);
         snprintf(r.assembly, sizeof r.assembly, "%s %s", name, g.assembly);
         InstrResult ir = fn(self, g.operand, BW);
         snprintf(r.report, sizeof r.report, "%s", ir.report);
-        AddressModes_addressing_mode_set(self->am, BW, g.addressmode, ir.result, g.register_, g.address);
+        if (!read_only && !unimplemented)
+            AddressModes_addressing_mode_set(self->am, BW, g.addressmode, ir.result, g.register_, g.address);
     }
 
     StopWatches_stop(self->sw, "ss");

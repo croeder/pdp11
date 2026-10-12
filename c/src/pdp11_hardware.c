@@ -27,8 +27,9 @@ pyint fix_sign(pyint word)
 
 pyint address_offset(pyint address, pyint offset)
 {
-    /* address plus sign-fixed offset */
-    return address + fix_sign(offset);
+    /* address plus sign-fixed offset, wrapped to 16 bits as the hardware does
+     * (FIX: the Python lets this go negative or past 0o177777) */
+    return (address + fix_sign(offset)) & MASK_WORD;
 }
 
 char *formatted_offset(char *buf, pyint offset)
@@ -90,10 +91,10 @@ pyint Registers_get(Registers *self, int reg)
 
 void Registers_set(Registers *self, int reg, pyint value)
 {
-    /* set a single register */
-    py_assert(value <= MASK_WORD);
+    /* set a single register.  FIX: registers are 16 bits; the Python asserts
+     * value <= 0o177777 and so accepts negative values, and crashes on carries. */
     check_register(reg);
-    self->registers[reg < 0 ? reg + 8 : reg] = value;
+    self->registers[reg < 0 ? reg + 8 : reg] = value & MASK_WORD;
 }
 
 pyint Registers_get_pc(Registers *self)
@@ -107,7 +108,7 @@ pyint Registers_inc_pc(Registers *self, const char *whocalled)
     /* increment program counter by 2.
      * The Program Counter points to the word after the instruction being interpreted. */
     (void)whocalled;
-    self->registers[self->pc] = self->registers[self->pc] + 2;
+    self->registers[self->pc] = (self->registers[self->pc] + 2) & MASK_WORD;
     return self->registers[self->pc];
 }
 
@@ -115,8 +116,7 @@ void Registers_set_pc(Registers *self, pyint newpc, const char *whocalled)
 {
     /* set program counter to arbitrary value */
     (void)whocalled;
-    py_assert(newpc <= MASK_WORD);
-    self->registers[self->pc] = newpc;
+    self->registers[self->pc] = newpc & MASK_WORD;
 }
 
 void Registers_set_pc_2x_offset(Registers *self, pyint offset, const char *whocalled)
@@ -127,7 +127,7 @@ void Registers_set_pc_2x_offset(Registers *self, pyint offset, const char *whoca
     offset = 2 * offset;
     if (offset > MASK_LOW_BYTE)  /* if we overflowed with the sign bit */
         offset = fix_sign(offset | MASK_HIGH_BYTE);
-    self->registers[self->pc] = self->registers[self->pc] + offset;
+    self->registers[self->pc] = (self->registers[self->pc] + offset) & MASK_WORD;
 }
 
 pyint Registers_get_sp(Registers *self)
@@ -138,8 +138,7 @@ pyint Registers_get_sp(Registers *self)
 void Registers_set_sp(Registers *self, pyint newsp, const char *whocalled)
 {
     (void)whocalled;
-    py_assert(newsp <= MASK_WORD);
-    self->registers[self->sp] = newsp;
+    self->registers[self->sp] = newsp & MASK_WORD;
 }
 
 char *Registers_registers_to_string(Registers *self, char *buf, size_t cap)
@@ -320,9 +319,11 @@ pyint Ram_read_byte(Ram *self, pyint address)
 
 void Ram_write_word(Ram *self, pyint address, pyint data)
 {
-    /* write a two-byte data chunk to memory.  Address must be even. */
+    /* write a two-byte data chunk to memory.
+     * FIX: the PDP-11/03 (LSI-11) ignores bit 0 of a word address rather
+     * than trapping; the Python asserted the address was even. */
+    address &= ~(pyint)1;
     py_assert(address < self->top_of_memory);   /* *** should be a trap */
-    py_assert(py_mod(address, 2) == 0);           /* *** should be a trap */
     py_assert(data <= MASK_WORD);
     IOWriter *w = find_writer(self, address);
     if (w) {
@@ -342,8 +343,8 @@ pyint Ram_read_word(Ram *self, pyint address)
     /* Read a word of memory.  Address must be even.  Returns a two-byte value.
      * Low bytes are stored at even-numbered memory locations.
      * High bytes at are stored at odd-numbered memory locations. */
+    address &= ~(pyint)1;   /* FIX: the 11/03 ignores bit 0 of a word address */
     py_assert(address < self->top_of_memory);   /* *** should be a trap */
-    py_assert(py_mod(address, 2) == 0);           /* *** should be a trap */
     pyint result;
     IOReader *r = find_reader(self, address);
     if (r) {
@@ -497,10 +498,8 @@ pyint PSW_set_v(PSW *self, char b, pyint value)
     } else if (b == 'W') {
         if (value > MASK_WORD) v = 1;
     }
-    /* TRANSLATION NOTE: the Python calls self.set_psw(v), passing v
-     * positionally, so it lands in the first parameter, mode - not v.
-     * Reproduced as written. */
-    PSW_set_psw(self, .mode = v);
+    /* FIX: the Python calls self.set_psw(v), which passes v as mode. */
+    PSW_set_psw(self, .v = v);
     return v;
 }
 
@@ -530,7 +529,7 @@ void Stack_init(Stack *self, Registers *reg, Ram *ram, PSW *psw)
 void Stack_push(Stack *self, pyint value)
 {
     /* decrement stack pointer, write value to that address */
-    pyint stack = Registers_get_sp(self->reg) - 2;
+    pyint stack = (Registers_get_sp(self->reg) - 2) & MASK_WORD;
     Registers_set_sp(self->reg, stack, "");
     Ram_write_word(self->ram, stack, value);
 }
@@ -543,6 +542,16 @@ pyint Stack_pop(Stack *self)
     Registers_set_sp(self->reg, stack + 2, "");
     return result;
 }
+
+void Stack_trap(Stack *self, pyint vector)
+{
+    /* NEW: trap sequence.  push PS, push PC, PC <- (vector), PS <- (vector+2) */
+    Stack_push(self, self->psw->psw & MASK_WORD);
+    Stack_push(self, Registers_get_pc(self->reg));
+    Registers_set_pc(self->reg, Ram_read_word(self->ram, vector), "trap");
+    PSW_set_psw(self->psw, .psw = Ram_read_word(self->ram, vector + 2));
+}
+
 
 /* ======================================================== AddressModes */
 /* Implements the 8 standard address modes of the PDP11 instruction set.
@@ -560,11 +569,12 @@ void AddressModes_init(AddressModes *self, Registers *reg, Ram *ram, PSW *psw)
     memset(self->address_modes_used, 0, sizeof self->address_modes_used);
 }
 
-AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_register)
+/* Resolve an operand specifier.  With fetch=0 the effective address is
+ * computed but the operand itself is not read (NEW: used for MOV, CLR and
+ * SXT destinations, which the hardware writes without reading, so that a
+ * write to a device register does not first trigger the device's read). */
+static AMGet resolve(AddressModes *self, char b, pyint mode_register, int fetch)
 {
-    /* copy the value from the location indicated by mode_register
-     * b: 'B' for byte, anything else for word
-     * mode_register: six bits that specify the mode and the register */
     AMGet r;
     memset(&r, 0, sizeof r);
     int addressmode = (int)py_shr(mode_register & 070, 3);
@@ -596,19 +606,16 @@ AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_re
         break;
     case 1:  /* Register Deferred: register contains address of operand */
         address = Registers_get(self->reg, register_);
-        operand = ram_read(self->ram, address);
         sprintf(r.assembly, "@R%d", register_);
         break;
     case 2:  /* Autoincrement: register contains address of operand then incremented */
         address = Registers_get(self->reg, register_);
-        operand = ram_read(self->ram, address);
         Registers_set(self->reg, register_, Registers_get(self->reg, register_) + increment);
         sprintf(r.assembly, "(R%d)+", register_);
         break;
     case 3: { /* autoincrement deferred */
         pyint pointer = Registers_get(self->reg, register_);
         address = Ram_read_word(self->ram, pointer);
-        operand = ram_read(self->ram, address);
         Registers_set(self->reg, register_, Registers_get(self->reg, register_) + 2);
         sprintf(r.assembly, "@(R%d)+", register_);
         break;
@@ -616,21 +623,18 @@ AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_re
     case 4:  /* autodecrement direct */
         Registers_set(self->reg, register_, Registers_get(self->reg, register_) - increment);
         address = Registers_get(self->reg, register_);
-        operand = ram_read(self->ram, address);
         sprintf(r.assembly, "-(R%d)", register_);
         break;
     case 5: { /* autodecrement deferred */
         Registers_set(self->reg, register_, Registers_get(self->reg, register_) - 2);
         pyint pointer = Registers_get(self->reg, register_);
         address = Ram_read_word(self->ram, pointer);
-        operand = ram_read(self->ram, address);
         sprintf(r.assembly, "@-(R%d)", register_);
         break;
     }
     case 6: { /* index: X, stored in the word after the instruction, is added to the register */
         pyint x = Ram_read_word_from_pc(self->ram);
         address = address_offset(Registers_get(self->reg, register_), x);
-        operand = ram_read(self->ram, address);
         oct6(r.operand_word, x);
         sprintf(r.assembly, "%s(R%d)", formatted_offset(x_text, x), register_);
         break;
@@ -639,12 +643,13 @@ AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_re
         pyint x = Ram_read_word_from_pc(self->ram);
         pyint pointer = address_offset(Registers_get(self->reg, register_), x);
         address = Ram_read_word(self->ram, pointer);
-        operand = ram_read(self->ram, address);
         oct6(r.operand_word, x);
         sprintf(r.assembly, "@%s(R%d)", formatted_offset(x_text, x), register_);
         break;
     }
     }
+    if (addressmode != 0 && fetch)
+        operand = ram_read(self->ram, address);
 
     r.operand = operand;
     r.register_ = register_;
@@ -653,88 +658,42 @@ AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_re
     return r;
 }
 
-/* https://retrocomputing.stackexchange.com/questions/9248/pdp-11-jmp-and-jsr-how-was-the-target-specified
- * Mode 0 - illegal
- * Mode 1, Register Indirect, jumps to wherever the register points - JMP (R1)
- * Mode 2 (Autoincrement) becomes immediate (Not useful for JMP/JSR) -  ADC #label
- * Mode 3 (Autoincrement Indirect) becomes Absolute - JMP @#label
- * Mode 6 (Indexed) is Relative -  JMP label;  JMP 20(PC)
- * Mode 7, Index Indirect - JMP @20(PC) */
+AMGet AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_register)
+{
+    /* copy the value from the location indicated by mode_register
+     * b: 'B' for byte, anything else for word
+     * mode_register: six bits that specify the mode and the register */
+    return resolve(self, b, mode_register, 1);
+}
+
+AMGet AddressModes_addressing_mode_address(AddressModes *self, char b, pyint mode_register)
+{
+    /* like addressing_mode_get, but does not read the operand */
+    return resolve(self, b, mode_register, 0);
+}
+
+/* JMP and JSR use the effective address of their destination as the jump
+ * target (modes 1-7; mode 0 is illegal).
+ * FIX: the Python reads one word too many in modes 4 and 5, and in mode 7
+ * reads a further word and adds the PC to it. */
 AMJmp AddressModes_addressing_mode_jmp(AddressModes *self, pyint mode_register)
 {
-    /* See page A-11 of pdp11/40.pdf */
     AMJmp r;
     memset(&r, 0, sizeof r);
-    int addressmode = (int)py_shr(mode_register & 070, 3);
-    int register_ = (int)(mode_register & 007);
-    pyint address = 0;
-    pyint jump_address = 0;
-    char x_text[PYSTR];
-
     r.run = 1;
-    switch (addressmode) {
-    case 0:
+    if ((mode_register & 070) == 0) {
         /* JMP direct illegal register address; halt.  *** this should call a trap */
-        jump_address = 0;
+        int register_ = (int)(mode_register & 007);
+        self->address_modes_used[0]++;
+        r.jump_address = 0;
         r.run = 0;
         sprintf(r.assembly, "R%d", register_);
-        break;
-    case 1:
-        jump_address = Registers_get(self->reg, register_);
-        sprintf(r.assembly, "@R%d", register_);
-        break;
-    case 2:
-        jump_address = Registers_get(self->reg, register_);
-        Registers_set(self->reg, register_, Registers_get(self->reg, register_) + 2);
-        sprintf(r.assembly, "(R%d)+", register_);
-        break;
-    case 3:
-        /* jumps to address contained in a word addressed by the register
-         * and increments the register by two - JMP @(R1)+ */
-        address = Registers_get(self->reg, register_);
-        jump_address = Ram_read_word(self->ram, address);
-        Registers_set(self->reg, register_, Registers_get(self->reg, register_) + 2);
-        sprintf(r.assembly, "@(R%d)+", register_);
-        break;
-    case 4:
-        /* register is decremented before being used as the address of the operand */
-        Registers_set(self->reg, register_, Registers_get(self->reg, register_) - 2);
-        address = Registers_get(self->reg, register_);
-        jump_address = Ram_read_word(self->ram, address);
-        sprintf(r.assembly, "-(R%d)", register_);
-        break;
-    case 5: {
-        /* register is decremented before being used as the pointer to the address */
-        Registers_set(self->reg, register_, Registers_get(self->reg, register_) - 2);
-        pyint pointer = Registers_get(self->reg, register_);
-        address = Ram_read_word(self->ram, pointer);
-        jump_address = Ram_read_word(self->ram, address);
-        sprintf(r.assembly, "@-(R%d)", register_);
-        break;
+        return r;
     }
-    case 6: {
-        /* The expression E, plus the contents of the PC, yield the effective jump address. */
-        pyint x = Ram_read_word_from_pc(self->ram);
-        address = Registers_get(self->reg, register_);
-        jump_address = address_offset(address, x);
-        oct6(r.operand_word, x);
-        sprintf(r.assembly, "%s(R%d)", formatted_offset(x_text, x), register_);
-        break;
-    }
-    case 7: {
-        /* The expression E, plus the contents of the PC,
-         * yield a pointer to the effective address of the operand. */
-        pyint x = Ram_read_word_from_pc(self->ram);
-        pyint pointer = address_offset(Registers_get(self->reg, register_), x);
-        address = Ram_read_word(self->ram, pointer);
-        pyint word = Ram_read_word(self->ram, address);
-        jump_address = Registers_get_pc(self->reg) + word;
-        oct6(r.operand_word, x);
-        sprintf(r.assembly, "@%s(R%d)", formatted_offset(x_text, x), register_);
-        break;
-    }
-    }
-    r.jump_address = jump_address;
+    AMGet g = resolve(self, 0, mode_register, 0);
+    r.jump_address = g.address;
+    strcpy(r.operand_word, g.operand_word);
+    strcpy(r.assembly, g.assembly);
     return r;
 }
 
@@ -747,7 +706,7 @@ void AddressModes_addressing_mode_set(AddressModes *self, char b, int addressmod
         if (b == 'B')
             Ram_write_byte(self->ram, address, result);
         else
-            Ram_write_word(self->ram, address, result);
+            Ram_write_word(self->ram, address, result & MASK_WORD);
     }
 }
 

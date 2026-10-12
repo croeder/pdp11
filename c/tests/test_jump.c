@@ -19,9 +19,11 @@ static void test_jmp_mode_0(void)
     pyint instruction = JMP_op(mode0, R0);
     Registers_set_pc(&reg, pc, "test_jmp_mode_1");
     ASSERT(ss_ops_is_ss_op(&ss, instruction));
-    ss_ops_do_ss_op(&ss, instruction);
-    /* *** there's no real way to test this; the CPU doesn't check this. */
-    ASSERT_EQ(Registers_get_pc(&reg), 00);
+    OpResult r = ss_ops_do_ss_op(&ss, instruction);
+    /* JMP to a register is illegal: the CPU stops without jumping
+     * (the Python jumped to 0; real hardware traps, which is not emulated) */
+    ASSERT_EQ(r.run, 0);
+    ASSERT_EQ(Registers_get_pc(&reg), pc);
 }
 
 static void test_jmp_mode_1(void)

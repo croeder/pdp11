@@ -63,14 +63,14 @@ SS_CASE(test_SWAB_1,   00177777,   0077777,   0000301,     "SWAB R1",  0177577, 
 SS_CASE(test_SWAB_2,   00177777,   0177577,   0000301,     "SWAB R1",  0077777,   "1000")
 SS_CASE(test_SWAB_3,   00177777,   0000377,   0000301,     "SWAB R1",  0177400,   "0100")
 SS_CASE(test_SWAB_4,   00177777,   0177400,   0000301,     "SWAB R1",  0000377,   "1000")
-SS_CASE(test_ROR_1,    00177777,   0xFF00,    0006001,     "ROR R1",   0x7F80,    "0000") /* 0b0111111110000000 */
+SS_CASE(test_ROR_1,    00177777,   0xFF00,    0006001,     "ROR R1",   0xFF80,    "1010") /* C=1 rotates into bit 15 (Python: 0x7F80, "0000") */
 SS_CASE(test_ROR_2,    00177777,   0x00FF,    0006001,     "ROR R1",   0x807F,    "1001") /* 0b1000000001111111 */
-SS_CASE(test_RORB_1,   00177777,   0x0FF0,    0106001,     "RORB R1",  0x8778,    "0011") /* 0b1000011101111000 */
-SS_CASE(test_RORB_2,   00177777,   0xF00F,    0106001,     "RORB R1",  0x7887,    "1001") /* 0b0111100010000111 */
+SS_CASE(test_RORB_1,   00177777,   0x0FF0,    0106001,     "RORB R1",  0x0FF8,    "1010") /* only the low byte rotates, C into bit 7 (Python: 0x8778, "0011") */
+SS_CASE(test_RORB_2,   00177777,   0xF00F,    0106001,     "RORB R1",  0xF087,    "1001") /* only the low byte rotates (Python: 0x7887) */
 SS_CASE(test_ROL,      00177777,   0xCC33,    0006101,     "ROL R1",   0x9867,    "1001") /* 0b1001100001100111 */
-SS_CASE(test_ROLB,     00177777,   0xCC33,    0106101,     "ROLB R1",  0x9966,    "0011") /* 0b1001100101100110 */
+SS_CASE(test_ROLB,     00177777,   0xCC33,    0106101,     "ROLB R1",  0xCC67,    "0000") /* only the low byte rotates, C into bit 0 (Python: 0x9966, "0011") */
 SS_CASE(test_ASR,      00177777,   0xCC33,    0006201,     "ASR R1",   0xE619,    "1001") /* 0b1110011000011001 */
-SS_CASE(test_ASRB,     00177777,   0xCC33,    0106201,     "ASRB R1",  0xE619,    "0011") /* 0b1110011000011001 */
+SS_CASE(test_ASRB,     00177777,   0xCC33,    0106201,     "ASRB R1",  0xCC19,    "0011") /* only the low byte shifts (Python: 0xE619) */
 
 int main(void)
 {

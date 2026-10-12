@@ -60,8 +60,8 @@ RR_CASE(test_BIC_2,    0777777,  3, 0001234,  4, 0001111,  0040000, "BIC R3,R4",
 RR_CASE(test_BICB_2,   0,        3, 0001234,  4, 0001111,  0140000, "BICB R3,R4",  0001101,   "0000")
 RR_CASE(test_MOV_0,    0777777,  3, 0123456,  4, 0000000,  0010000, "MOV R3,R4",   0123456,   "1001")
 RR_CASE(test_MOVB_01,  0777777,  3, 0xA72E,   4, 0x0000,   0110000, "MOVB R3,R4",  0x002E,    "0001")
-RR_CASE(test_MOVB_02,  0777777,  3, 0xA7AE,   4, 0x0000,   0110000, "MOVB R3,R4",  0x00AE,    "1001")
-RR_CASE(test_MOVB_03,  0777777,  3, 0x00AE,   4, 0xA700,   0110000, "MOVB R3,R4",  0xA7AE,    "1001")
+RR_CASE(test_MOVB_02,  0777777,  3, 0xA7AE,   4, 0x0000,   0110000, "MOVB R3,R4",  0xFFAE,    "1001") /* MOVB to a register sign-extends (Python: 0x00AE) */
+RR_CASE(test_MOVB_03,  0777777,  3, 0x00AE,   4, 0xA700,   0110000, "MOVB R3,R4",  0xFFAE,    "1001") /* sign-extends (Python: 0xA7AE) */
 
 static void test_MOVB_04(void)
 {
@@ -88,11 +88,11 @@ static void test_MOVB_04(void)
 
 RR_CASE(test_ADD_PP_P,  0, 2, 486,                          4, 692,                         0060000, "ADD R2,R4", 1178,    "0000")
 RR_CASE(test_ADD_PP_Z,  0, 2, 0,                            4, 0,                           0060000, "ADD R2,R4", 0,       "0100")
-RR_CASE(test_ADD_PP_NVC,0, 2, MAX_POS_INT - 64,             4, MAX_POS_INT - 64,            0060000, "ADD R2,R4", 0177576, "1011")
+RR_CASE(test_ADD_PP_NVC,0, 2, MAX_POS_INT - 64,             4, MAX_POS_INT - 64,            0060000, "ADD R2,R4", 0177576, "1010") /* no carry out of bit 15 (Python: "1011") */
 RR_CASE(test_ADD_NP_PC, 0, 2, twosComplementNegative(286),  4, 384,                         0060000, "ADD R2,R4", 98,      "0001")
 RR_CASE(test_ADD_NP_ZC, 0, 2, twosComplementNegative(286),  4, 286,                         0060000, "ADD R2,R4", 0,       "0101")
 RR_CASE(test_ADD_NP_N,  0, 2, twosComplementNegative(286),  4, 3,                           0060000, "ADD R2,R4", 65253,   "1000") /* -283 */
-RR_CASE(test_ADD_NN_N,  0, 2, twosComplementNegative(286),  4, twosComplementNegative(286), 0060000, "ADD R2,R4", twosComplementNegative(572), "1000")
+RR_CASE(test_ADD_NN_N,  0, 2, twosComplementNegative(286),  4, twosComplementNegative(286), 0060000, "ADD R2,R4", twosComplementNegative(572), "1001") /* carry out (Python: "1000") */
 RR_CASE(test_ADD_NN_VC, 0, 2, twosComplementNegative(MAX_POS_INT - 64), 4, twosComplementNegative(MAX_POS_INT - 64), 0060000, "ADD R2,R4", 0202, "0011")
 
 static void test_10_70(void)
@@ -148,19 +148,19 @@ static void test_SUB_Assembly(void)
     }
 
 #define W(x) PDP11WordifyPythonInteger(x)
-SUB_CASE(test_SUB_zp_N,  z, p, W(z - p), "1000")  /* 1 zero minus small positive */
+SUB_CASE(test_SUB_zp_N,  z, p, W(z - p), "1001")  /* 1 zero minus small positive; borrow (Python: "1000") */
 SUB_CASE(test_SUB_Pp_P,  P, p, W(P - p), "0000")  /* 2 big positive minus small positive */
 SUB_CASE(test_SUB_PP_Z,  P, P, 0,        "0100")
-SUB_CASE(test_SUB_pP_N,  p, P, W(p - P), "1000")  /* 4 */
+SUB_CASE(test_SUB_pP_N,  p, P, W(p - P), "1001")  /* 4; borrow (Python: "1000") */
 SUB_CASE(test_SUB_Nz_N,  N, z, W(N),     "1000")  /* 5 */
-SUB_CASE(test_SUB_Np_VC, N, p, W(N - p), "0011")  /* 6 */
-SUB_CASE(test_SUB_NP_V,  N, P, W(N - P), "0011")  /* 7 (defined twice in the Python; pytest runs the later one, which is identical) */
-SUB_CASE(test_SUB_zP_N,  z, P, W(-P),    "1000")  /* 9 */
-SUB_CASE(test_SUB_Nn_N,  N, n, W(N - n), "1000")  /* 10 */
+SUB_CASE(test_SUB_Np_VC, N, p, W(N - p), "0010")  /* 6; overflow, no borrow (Python: "0011") */
+SUB_CASE(test_SUB_NP_V,  N, P, W(N - P), "0010")  /* 7; overflow, no borrow (Python: "0011"; defined twice there, identically) */
+SUB_CASE(test_SUB_zP_N,  z, P, W(-P),    "1001")  /* 9; borrow (Python: "1000") */
+SUB_CASE(test_SUB_Nn_N,  N, n, W(N - n), "1001")  /* 10; borrow (Python: "1000") */
 SUB_CASE(test_SUB_NN_Z,  N, N, 0,        "0100")  /* 11 */
 SUB_CASE(test_SUB_nN_P,  n, N, W(n - N), "0000")  /* 12 */
-SUB_CASE(test_SUB_Zn_P,  z, n, W(-n),    "0000")  /* 13 */
-SUB_CASE(test_SUB_nP_V,  n, P, W(n - P), "0011")  /* 14 */
+SUB_CASE(test_SUB_Zn_P,  z, n, W(-n),    "0001")  /* 13; borrow (Python: "0000") */
+SUB_CASE(test_SUB_nP_V,  n, P, W(n - P), "0010")  /* 14; overflow, no borrow (Python: "0011") */
 SUB_CASE(test_SUB_Pn_V,  P, N, W(P - N), "1011")  /* 16 */
 
 int main(void)

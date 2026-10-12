@@ -9,8 +9,12 @@
  *   and are not translated.  pdp11Run_run() is the Python run() loop with
  *   the stdio Terminal; run() called terminal.window_cycle(), which Terminal
  *   does not define, so the C calls Terminal_cycle().
- * - instruction_cycle logs an error when the PC did not change but, as in
- *   the Python, does not halt (it sets an unused variable there). */
+ * - FIX: run() counted each instruction twice (once here and once in
+ *   instruction_cycle); it is now counted once.
+ * - FIX: instruction_cycle logged "Halting" as an error when the PC did not
+ *   change, but did not halt (the Python sets an unused variable there).  A
+ *   jump to itself is a legitimate loop, so it still does not halt; the log
+ *   line no longer says it does. */
 #include "pdp11.h"
 #include "pdp11_logger.h"
 
@@ -123,7 +127,8 @@ int PDP11_instruction_cycle(PDP11 *self)
     }
     if (pc == Registers_get_pc(&self->reg)) {
         char a[PYSTR];
-        logging_error("instruction_cycle: pc was not changed at %s. Halting.", py_oct(a, pc));
+        /* A jump to itself is a legitimate wait loop, so this does not halt. */
+        logging_info("instruction_cycle: pc was not changed at %s", py_oct(a, pc));
     }
     StopWatches_stop(&self->sw, "instruction_cycle");
 
@@ -159,8 +164,7 @@ void pdp11Run_run(pdp11Run *self, pyint limit)
     pdp11->CPU_cycles = 0;
     StopWatches_start(&pdp11->sw, "CPU");
     while (PDP11_get_run(pdp11)) {
-        PDP11_set_run(pdp11, PDP11_instruction_cycle(pdp11));
-        pdp11->CPU_cycles = pdp11->CPU_cycles + 1;   /* counted twice, as in the Python */
+        PDP11_set_run(pdp11, PDP11_instruction_cycle(pdp11));   /* counts the cycle */
         Terminal_cycle(&pdp11->terminal);
         if (limit >= 0 && pdp11->CPU_cycles > limit) {
             logging_info("run: instruction limit reached");

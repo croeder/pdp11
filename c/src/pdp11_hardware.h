@@ -136,6 +136,8 @@ typedef struct {
 void  Stack_init(Stack *self, Registers *reg, Ram *ram, PSW *psw);
 void  Stack_push(Stack *self, pyint value);
 pyint Stack_pop(Stack *self);
+/* trap sequence: push PS and PC, load PC and PS from vector and vector+2 */
+void  Stack_trap(Stack *self, pyint vector);
 
 /* -------------------------------------------------------- AddressModes */
 typedef struct {
@@ -165,6 +167,8 @@ typedef struct {
 
 void   AddressModes_init(AddressModes *self, Registers *reg, Ram *ram, PSW *psw);
 AMGet  AddressModes_addressing_mode_get(AddressModes *self, char b, pyint mode_register);
+/* effective address only; the operand is not read */
+AMGet  AddressModes_addressing_mode_address(AddressModes *self, char b, pyint mode_register);
 AMJmp  AddressModes_addressing_mode_jmp(AddressModes *self, pyint mode_register);
 void   AddressModes_addressing_mode_set(AddressModes *self, char b, int addressmode, pyint result, int register_, pyint address);
 void   AddressModes_address_mode_report(AddressModes *self);

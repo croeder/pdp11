@@ -31,9 +31,10 @@ static NooprResult HALT(noopr_ops *self)
 
 static NooprResult WAIT(noopr_ops *self)
 {
-    /* 00 00 01 Wait 4-75   *** unimplemented */
-    Registers_inc_pc(self->reg, "WAIT");
-    return (NooprResult){0, "WAIT unimplemented"};
+    /* 00 00 01 Wait 4-75.  There are no interrupts to wait for, so the CPU stops.
+     * FIX: the Python also advanced the PC past the next word. */
+    (void)self;
+    return (NooprResult){0, "WAIT: no interrupts implemented; stopping"};
 }
 
 static NooprResult RTI(noopr_ops *self)
@@ -42,14 +43,15 @@ static NooprResult RTI(noopr_ops *self)
      * PC < (SP)^; PS< (SP)^ */
     Registers_set_pc(self->reg, Stack_pop(self->stack), "RTI");
     PSW_set_psw(self->psw, .psw = Stack_pop(self->stack));
-    return (NooprResult){1, "RTI unimplemented"};
+    return (NooprResult){1, ""};
 }
 
 static NooprResult BPT(noopr_ops *self)
 {
-    /* 00 00 03 BPT breakpoint trap 4-67   *** unimplemented */
-    Registers_inc_pc(self->reg, "BPT");
-    return (NooprResult){0, "BPT unimplemented"};
+    /* 00 00 03 BPT breakpoint trap 4-67: trap through vector 14.
+     * FIX: the Python advanced the PC and stopped. */
+    Stack_trap(self->stack, 014);
+    return (NooprResult){1, ""};
 }
 
 static NooprResult IOT(noopr_ops *self)
@@ -59,14 +61,10 @@ static NooprResult IOT(noopr_ops *self)
      * | push PC
      * PC <- 20
      * PS <- 22
-     * TRANSLATION NOTE: the Python pushes self.psw.PSW, an attribute that
-     * does not exist (AttributeError).  The C pushes the PSW value, which is
-     * what the comment describes.  The rest is as written, including loading
-     * 0o22 into SP rather than PS. */
-    Stack_push(self->stack, self->psw->psw);
-    Stack_push(self->stack, Registers_get_pc(self->reg));
-    Registers_set_pc(self->reg, 020, "IOT");
-    Registers_set_sp(self->reg, 022, "IOT");
+     * i.e. trap through vector 20: PC and PS are loaded from locations 20 and 22.
+     * FIX: the Python pushed a nonexistent attribute (AttributeError), set PC
+     * to 20 itself, and loaded 22 into SP. */
+    Stack_trap(self->stack, 020);
     return (NooprResult){1, ""};
 }
 
@@ -79,12 +77,11 @@ static NooprResult RESET(noopr_ops *self)
 
 static NooprResult RTT(noopr_ops *self)
 {
-    /* 00 00 06 RTT return from interrupt 4-70
-     * TRANSLATION NOTE: the Python ends with
-     * self.psw.set_condition_codes('W', self.reg.get_sp(), "***"), a method
-     * PSW does not have (AttributeError).  That call is left out here. */
+    /* 00 00 06 RTT return from interrupt 4-70: PC < (SP)^; PS < (SP)^
+     * (like RTI; RTT differs only in suppressing a trace trap, which is not emulated)
+     * FIX: the Python popped the PS into SP and then raised AttributeError. */
     Registers_set_pc(self->reg, Stack_pop(self->stack), "RTT");
-    Registers_set_sp(self->reg, Stack_pop(self->stack), "RTT");
+    PSW_set_psw(self->psw, .psw = Stack_pop(self->stack));
     return (NooprResult){1, ""};
 }
 

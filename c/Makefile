@@ -70,6 +70,8 @@ clean:
 .SECONDARY:
 
 # Differential test against the Python: random single instructions through both.
+# Matches exactly at tag c-translation-faithful; on the fixed code it lists
+# the cases the bug fixes change.
 #   make difftest            (needs python3; run from this directory)
 $(BUILD)/diff_ops: tests/differential/diff_ops.c tests/fixture.h $(LIB)
 	$(CC) $(CFLAGS) -Isrc -Itests $< $(LIB) $(LDLIBS) -o $@
@@ -81,3 +83,16 @@ difftest: $(BUILD)/diff_ops
 	$(BUILD)/diff_ops < $(BUILD)/cases.txt
 
 .PHONY: difftest
+
+# Comparison with SIMH (an independent PDP-11 simulator, 11/03 + EIS):
+#   make simhcheck SIMH=/path/to/simh/BIN/pdp11
+$(BUILD)/simh_ops: tests/differential/simh_ops.c tests/fixture.h $(LIB)
+	$(CC) $(CFLAGS) -Isrc -Itests $< $(LIB) $(LDLIBS) -o $@
+
+SIMH_CASES ?= 3000
+SIMH_SEED  ?= 1
+simhcheck: $(BUILD)/simh_ops
+	@test -n "$(SIMH)" || { echo "set SIMH=/path/to/simh/BIN/pdp11"; exit 2; }
+	python3 tests/differential/simh_check.py $(SIMH) $(BUILD)/simh_ops $(SIMH_CASES) $(SIMH_SEED)
+
+.PHONY: simhcheck

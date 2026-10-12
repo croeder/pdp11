@@ -30,10 +30,10 @@ OpResult cc_ops_do_cc_op(cc_ops *self, pyint instruction)
     OpResult r = {0};
     char o[PYSTR];
     if ((instruction & self->set_opcode) == self->set_opcode) {
-        /* As in the Python, "set" replaces all four bits rather than OR-ing them in. */
+        /* FIX: set the selected bits; the Python replaced all four NZVC bits. */
         pyint set_bits = instruction & self->psw_bits;
         snprintf(r.assembly, sizeof r.assembly, "SETCC %s", py_oct(o, set_bits));
-        PSW_set_nzvc(self->psw, set_bits);
+        PSW_set_nzvc(self->psw, (self->psw->psw & self->psw_bits) | set_bits);
     } else if ((instruction & self->clear_opcode) == self->clear_opcode) {
         pyint clr_bits = instruction & self->psw_bits;
         pyint set_bits = self->psw->psw & ~clr_bits;

@@ -9,6 +9,7 @@
 typedef struct {
     char assembly[16];
     char report[160];
+    int run;
 } OtherResult;
 
 void other_ops_init(other_ops *self, Registers *reg, Ram *ram, PSW *psw, AddressModes *am, StopWatches *sw)
@@ -27,7 +28,7 @@ static OtherResult RTS(other_ops *self, pyint instruction)
     /* 00 20 0R: RTS return from subroutine 4-60
      * | PC <- reg
      * | reg <- (SP)^ */
-    OtherResult o;
+    OtherResult o = {.run = 1};
     int R = (int)(instruction & 0000007);
     Registers_set_pc(self->reg, Registers_get(self->reg, R), "RTS");
     Registers_set(self->reg, R, Stack_pop(&self->stack));
@@ -44,11 +45,22 @@ static OtherResult JSR(other_ops *self, pyint instruction)
      * |  pushstack(reg)
      * |  reg <- PC+2
      * |  PC <- (dst) */
-    OtherResult o;
+    OtherResult o = {.run = 1};
     int R = (int)py_shr(instruction & 0000700, 6);
     pyint DD = instruction & 0000077;
     AMJmp j = AddressModes_addressing_mode_jmp(self->am, DD);
-    Stack_push(&self->stack, Registers_get(self->reg, R));
+    if (!j.run) {
+        /* FIX: JSR R,Rn is illegal; stop instead of jumping to 0 (the Python
+         * pushed R and jumped to 0).  *** should trap */
+        strcpy(o.assembly, "JSR");
+        snprintf(o.report, sizeof o.report, "JSR with register destination is illegal");
+        o.run = 0;
+        return o;
+    }
+    /* SP is decremented before R is read, so JSR SP,dst pushes the
+     * decremented SP (as SIMH and the hardware do; the Python pushed the old SP). */
+    Registers_set_sp(self->reg, Registers_get_sp(self->reg) - 2, "JSR");
+    Ram_write_word(self->ram, Registers_get_sp(self->reg), Registers_get(self->reg, R));
     Registers_set(self->reg, R, Registers_get_pc(self->reg));
     Registers_set_pc(self->reg, j.jump_address, "JSR");
     char a[PYSTR], b[PYSTR], c[PYSTR], d[PYSTR];
@@ -61,7 +73,7 @@ static OtherResult JSR(other_ops *self, pyint instruction)
 
 static OtherResult unimplemented(const char *name, pyint instruction)
 {
-    OtherResult o;
+    OtherResult o = {.run = 1};
     char a[PYSTR];
     snprintf(o.assembly, sizeof o.assembly, "%s", name);
     snprintf(o.report, sizeof o.report, "%s unimplemented", py_oct(a, instruction));
@@ -107,7 +119,7 @@ OpResult other_ops_do_other_op(other_ops *self, pyint instruction)
             OtherResult o = other_instructions[i].fn(self, instruction);
             snprintf(r.assembly, sizeof r.assembly, "%s", o.assembly);
             snprintf(r.report, sizeof r.report, "%s", o.report);
-            r.run = 1;
+            r.run = o.run;
             found = 1;
             break;
         }
