@@ -1,0 +1,13 @@
+[package]
+name = "pdp11"
+version = "0.1.0"
+edition = "2021"
+description = "PDP-11/03 emulator: CPU with EIS, DL11 console, M9301-YA boot ROM"
+
+[dependencies]
+libc = "0.2"
+log = { version = "0.4", features = ["std"] }
+serde_json = "1"
+
+[profile.release]
+debug = false
