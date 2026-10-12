@@ -10,7 +10,21 @@
 # them from the repository root (the parent of this directory).
 
 CC      ?= cc
-CFLAGS  ?= -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-override-init -Wno-format-truncation -D_POSIX_C_SOURCE=200809L
+
+# Warnings this code deliberately triggers, turned off only where the
+# compiler knows them (GCC and clang name the initializer one differently,
+# and older clang has no format-truncation warning).  Each is tested in its
+# positive -W form, because GCC silently accepts unknown -Wno- options.
+cc_warning = $(shell $(CC) -Werror -W$(1) -x c -c /dev/null -o /dev/null >/dev/null 2>&1 && echo -Wno-$(1))
+WARN_OFF := $(call cc_warning,override-init) $(call cc_warning,initializer-overrides) \
+            $(call cc_warning,format-truncation)
+
+# macOS hides clock_gettime and CLOCK_MONOTONIC when only _POSIX_C_SOURCE is set.
+ifeq ($(shell uname -s),Darwin)
+PLATFORM_DEFS := -D_DARWIN_C_SOURCE
+endif
+
+CFLAGS  ?= -std=c11 -O2 -g -Wall -Wextra -Werror $(WARN_OFF) -D_POSIX_C_SOURCE=200809L $(PLATFORM_DEFS)
 LDLIBS  += -lpthread
 
 ROOT    := ..

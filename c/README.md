@@ -32,7 +32,9 @@ make difftest   # compare with the Python (needs python3; differs where bugs wer
 Python, every run writes `./pdp11.log`.
 
 Requires a C11 compiler and POSIX (pthreads, termios, `open_memstream`).
-Tested with gcc on Linux.
+Tested with gcc and clang on Linux.  The Makefile adds `-D_DARWIN_C_SOURCE`
+on macOS, which needs it for `clock_gettime`; the macOS build has not been
+tested here.
 
 ## What is translated
 
